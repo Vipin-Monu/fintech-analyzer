@@ -2,18 +2,13 @@ import streamlit as st
 import pdfplumber
 import pandas as pd
 import re
-import io
 import pytesseract
 from PIL import Image
 import difflib
-from openai import OpenAI
-
-# 🔐 OpenAI setup
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 st.set_page_config(layout="wide")
 
-st.title("🚀 Fintech AI Analyzer (FINAL PRO)")
+st.title("🚀 Fintech Analyzer (SMART VERSION)")
 
 # 📂 Upload
 file = st.file_uploader("Upload Bank Statement (PDF/Image)")
@@ -57,32 +52,17 @@ if file:
 
             txn_type = "Credit" if amount > 5000 else "Debit"
 
-            d = desc.lower()
+            transactions.append([date, desc, amount, txn_type])
 
-            if "upi" in d:
-                category = "UPI"
-            elif "bank" in d:
-                category = "Bank Transfer"
-            elif "atm" in d:
-                category = "ATM"
-            elif "amazon" in d or "flipkart" in d:
-                category = "Shopping"
-            else:
-                category = "Other"
-
-            transactions.append([date, desc, amount, txn_type, category])
-
-    df = pd.DataFrame(transactions, columns=["Date", "Description", "Amount", "Type", "Category"])
+    df = pd.DataFrame(transactions, columns=["Date", "Description", "Amount", "Type"])
 
     st.subheader("📊 Full Data")
     st.dataframe(df)
 
-    # 🔎 SEARCH BY NAME
+    # 🔎 SEARCH SECTION
     st.subheader("🔎 Search by Name")
 
     search = st.text_input("Enter Name")
-
-    filtered_df = pd.DataFrame()
 
     if search:
         results = []
@@ -97,50 +77,43 @@ if file:
 
         filtered_df = pd.DataFrame(results)
 
-        st.subheader(f"📌 Data for: {search}")
-        st.dataframe(filtered_df)
+        if not filtered_df.empty:
+            st.subheader(f"📌 Results for: {search}")
 
-    # 📥 DOWNLOAD FILTERED DATA
-    if not filtered_df.empty:
-        csv = filtered_df.to_csv(index=False).encode("utf-8")
+            # 💳 CREDIT / DEBIT अलग
+            credit_df = filtered_df[filtered_df["Type"] == "Credit"]
+            debit_df = filtered_df[filtered_df["Type"] == "Debit"]
 
-        st.download_button(
-            label="📥 Download Filtered Data",
-            data=csv,
-            file_name=f"{search}_data.csv",
-            mime="text/csv"
-        )
+            col1, col2 = st.columns(2)
 
-    # 🤖 GPT AI CHATBOT (FINAL FIXED)
-    st.subheader("🤖 Ask AI (GPT Powered)")
+            with col1:
+                st.success("💰 Credit Transactions")
+                st.dataframe(credit_df)
+                st.write("Total Credit:", credit_df["Amount"].sum())
 
-    question = st.text_input("Ask anything about your data")
+            with col2:
+                st.error("💸 Debit Transactions")
+                st.dataframe(debit_df)
+                st.write("Total Debit:", debit_df["Amount"].sum())
 
-    if question and not df.empty:
+            # 📥 Download
+            csv = filtered_df.to_csv(index=False).encode("utf-8")
 
-        data_text = df.to_string(index=False)
+            st.download_button(
+                label="📥 Download This Data",
+                data=csv,
+                file_name=f"{search}_transactions.csv",
+                mime="text/csv"
+            )
 
-        prompt = f"""
-You are a financial assistant.
+        else:
+            st.warning("No matching data found")
 
-Here is bank transaction data:
-{data_text}
+    # 📊 OVERALL SUMMARY
+    st.subheader("📊 Overall Summary")
 
-User question:
-{question}
+    total_credit = df[df["Type"] == "Credit"]["Amount"].sum()
+    total_debit = df[df["Type"] == "Debit"]["Amount"].sum()
 
-Answer clearly and shortly.
-"""
-
-        response = client.responses.create(
-            model="gpt-4o-mini",
-            input=prompt
-        )
-
-        # ✅ SAFE OUTPUT
-        try:
-            answer = response.output[0].content[0].text
-        except:
-            answer = "AI response error"
-
-        st.write("🤖 AI:", answer)
+    st.write("💰 Total Credit:", total_credit)
+    st.write("💸 Total Debit:", total_debit)
