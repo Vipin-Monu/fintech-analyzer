@@ -1,101 +1,101 @@
 import streamlit as st
-import pandas as pd
 import pdfplumber
-import re
+import pandas as pd
+from openai import OpenAI
+import os
+import json
 
-st.set_page_config(page_title="Fintech Analyzer", layout="wide")
+# ---------- API ----------
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-st.title("💰 Universal Fintech Analyzer")
+st.set_page_config(page_title="AI Fintech Analyzer", layout="wide")
 
+st.title("💰 Universal AI Fintech Analyzer")
+
+# ---------- Upload ----------
 uploaded_file = st.file_uploader("Upload Bank Statement PDF", type=["pdf"])
-search_name = st.text_input("🔍 Enter Name")
 
+search_name = st.text_input("🔍 Enter Name (optional)")
 
-def match_name(line, search_name):
-    line = re.sub(r'[^a-zA-Z]', '', line).lower()
-    search_name = re.sub(r'[^a-zA-Z]', '', search_name).lower()
-    return search_name in line
+# ---------- PROCESS ----------
+if uploaded_file:
 
+    full_text = ""
 
-# ✅ ONLY RUN WHEN BOTH EXIST
-if uploaded_file and search_name:
-
-    all_text = ""
     with pdfplumber.open(uploaded_file) as pdf:
         for page in pdf.pages:
             text = page.extract_text()
             if text:
-                all_text += text + "\n"
+                full_text += text + "\n"
 
-    lines = all_text.split("\n")
+    st.success("✅ PDF Loaded Successfully")
 
-    cleaned_lines = []
-    temp = ""
+    # ---------- AI CALL ----------
+    with st.spinner("🤖 AI is analyzing transactions..."):
 
-    for line in lines:
-        line = line.strip()
+        response = client.responses.create(
+            model="gpt-4o-mini",
+            input=f"""
+You are a bank statement analyzer.
 
-        if re.match(r"\d{2}-\d{2}-\d{4}", line):
-            if temp:
-                cleaned_lines.append(temp)
-            temp = line
-        else:
-            temp += " " + line
+Extract ALL transactions from this text.
 
-    if temp:
-        cleaned_lines.append(temp)
+Return ONLY JSON array like:
+[
+  {{"date": "DD-MM-YYYY", "name": "string", "credit": number, "debit": number}}
+]
 
-    data = []
+Rules:
+- Detect ALL banks (SBI, HDFC, Axis, ICICI, etc.)
+- If money added → credit
+- If money deducted → debit
+- Name must be clean (person or entity)
+- No explanation, only JSON
 
-    for line in cleaned_lines:
+TEXT:
+{full_text}
+"""
+        )
 
-        if match_name(line, search_name):
+    try:
+        output = response.output_text.strip()
 
-            date_match = re.search(r"\d{2}-\d{2}-\d{4}", line)
-            date = date_match.group() if date_match else ""
+        # Fix if extra text comes
+        start = output.find("[")
+        end = output.rfind("]") + 1
+        clean_json = output[start:end]
 
-            amounts = re.findall(r"\d+\.\d{2}", line)
+        data = json.loads(clean_json)
 
-            debit = 0
-            credit = 0
-
-            if len(amounts) >= 2:
-                amt = float(amounts[-2])
-
-                if "sent" in line.lower() or "paid" in line.lower() or "upi/p2a" in line.lower():
-                    debit = amt
-                else:
-                    credit = amt
-
-            data.append({
-                "Date": date,
-                "Name": search_name,
-                "Credit": credit,
-                "Debit": debit
-            })
-
-    if data:
         df = pd.DataFrame(data)
 
+        # ---------- CLEAN ----------
+        df["credit"] = pd.to_numeric(df["credit"], errors="coerce").fillna(0)
+        df["debit"] = pd.to_numeric(df["debit"], errors="coerce").fillna(0)
+
+        # ---------- FILTER ----------
+        if search_name:
+            df = df[df["name"].str.contains(search_name, case=False, na=False)]
+
+        # ---------- DISPLAY ----------
         st.subheader("📊 Transactions")
         st.dataframe(df, use_container_width=True)
 
-        total_credit = df["Credit"].sum()
-        total_debit = df["Debit"].sum()
+        # ---------- SUMMARY ----------
+        total_credit = df["credit"].sum()
+        total_debit = df["debit"].sum()
 
         st.subheader("💰 Summary")
-        st.write(f"🟢 Total Credit: {total_credit}")
-        st.write(f"🔴 Total Debit: {total_debit}")
-        st.write(f"📊 Net: {total_credit - total_debit}")
+        st.success(f"Total Credit: {total_credit}")
+        st.error(f"Total Debit: {total_debit}")
+        st.info(f"Net: {total_credit - total_debit}")
 
-        df.to_excel("filtered.xlsx", index=False)
+        # ---------- DOWNLOAD ----------
+        df.to_excel("output.xlsx", index=False)
 
-        with open("filtered.xlsx", "rb") as f:
-            st.download_button("⬇️ Download Excel", f, file_name="filtered.xlsx")
+        with open("output.xlsx", "rb") as f:
+            st.download_button("⬇️ Download Excel", f, "transactions.xlsx")
 
-    else:
-        st.warning("No data found for this name")
-
-# 👇 THIS IS NEW
-elif uploaded_file and not search_name:
-    st.info("👉 Please enter a name to search transactions")
+    except Exception as e:
+        st.error("❌ Error parsing AI response")
+        st.text(str(e))
