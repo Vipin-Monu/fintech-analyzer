@@ -4,7 +4,7 @@ import pdfplumber
 import re
 from io import BytesIO
 
-st.title("💰 Fintech Analyzer (Accurate Version)")
+st.title("💰 Fintech Analyzer (Final Working)")
 
 uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
 
@@ -20,28 +20,31 @@ if uploaded_file:
 
     for line in lines:
 
-        # Proper pattern: Date + Debit + Credit
-        match = re.search(
-            r"(\d{2}-\d{2}-\d{4}).*?(\d+\.\d{2})?\s*(\d+\.\d{2})?\s*(\d+\.\d{2})",
-            line
-        )
+        # check valid transaction line
+        if re.search(r"\d{2}-\d{2}-\d{4}", line):
 
-        if match:
-            date = match.group(1)
+            parts = line.split()
 
-            debit = match.group(2)
-            credit = match.group(3)
-            balance = match.group(4)
+            # find all numbers
+            numbers = re.findall(r"\d+\.\d{2}", line)
 
-            # Extract clean name
-            name = re.findall(r"/([A-Za-z ]+)", line)
-            name = name[0] if name else "Unknown"
+            if len(numbers) >= 2:
+                amount = float(numbers[-2])   # debit or credit
+                balance = float(numbers[-1])  # last is always balance
 
-            if debit:
-                data.append([date, name.strip(), float(debit), "Debit"])
+                date = parts[0]
 
-            if credit:
-                data.append([date, name.strip(), float(credit), "Credit"])
+                # detect type
+                if "sent" in line.lower() or "paid" in line.lower() or "upi" in line.lower():
+                    txn_type = "Debit"
+                else:
+                    txn_type = "Credit"
+
+                # extract name better
+                name_match = re.search(r"/([A-Za-z ]+)", line)
+                name = name_match.group(1).strip() if name_match else "Unknown"
+
+                data.append([date, name, amount, txn_type])
 
     df = pd.DataFrame(data, columns=["Date", "Name", "Amount", "Type"])
 
@@ -62,7 +65,6 @@ if uploaded_file:
         st.write("### 💰 Summary")
         st.write("Total Debit:", debit_df["Amount"].sum())
         st.write("Total Credit:", credit_df["Amount"].sum())
-        st.write("Net:", credit_df["Amount"].sum() - debit_df["Amount"].sum())
 
         # Excel
         output = BytesIO()
@@ -70,8 +72,4 @@ if uploaded_file:
             debit_df.to_excel(writer, sheet_name='Debit', index=False)
             credit_df.to_excel(writer, sheet_name='Credit', index=False)
 
-        st.download_button(
-            "📥 Download Excel",
-            output.getvalue(),
-            "transactions.xlsx"
-        )
+        st.download_button("📥 Download Excel", output.getvalue(), "transactions.xlsx")
