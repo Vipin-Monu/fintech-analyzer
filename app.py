@@ -69,12 +69,16 @@ if file:
         st.write("### 📊 Category Chart")
         st.bar_chart(df.groupby("Category")["Amount"].sum())
 
-    # 🔍 Search
+    # 🔍 SMART SEARCH (FIXED)
     st.write("## 🔎 Search / Filter by Name")
     search = st.text_input("Enter Name (e.g. Vipin Kumar)")
 
     if search:
-        filtered_df = df[df["Description"].str.contains(search, case=False, na=False)]
+        clean_search = search.lower().replace(" ", "")
+
+        filtered_df = df[
+            df["Description"].str.lower().str.replace(" ", "").str.contains(clean_search, na=False)
+        ]
 
         st.write(f"### 📌 Data for: {search}")
         st.dataframe(filtered_df)
@@ -95,7 +99,6 @@ if file:
             output = io.BytesIO()
 
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-
                 df.to_excel(writer, index=False, sheet_name="All Data")
 
                 category_summary = df.groupby("Category")["Amount"].sum().reset_index()
