@@ -4,4 +4,4 @@ pdfplumber
 openpyxl
 pytesseract
 Pillow
-openai
+
