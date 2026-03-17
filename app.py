@@ -27,14 +27,26 @@ if file:
 
                     if match:
                         date = match.group(1)
-                        desc = match.group(2)
+                        desc = match.group(2).strip()
                         amount = float(match.group(3).replace(",", ""))
 
-                        transactions.append([date, desc, amount])
+                        # classify debit/credit
+                        if amount > 5000:
+                            txn_type = "Credit"
+                        else:
+                            txn_type = "Debit"
 
-    df = pd.DataFrame(transactions, columns=["Date", "Description", "Amount"])
+                        transactions.append([date, desc, amount, txn_type])
+
+    df = pd.DataFrame(transactions, columns=["Date", "Description", "Amount", "Type"])
 
     st.dataframe(df)
 
     if not df.empty:
-        st.write("### Total Amount:", df["Amount"].sum())
+        total = df["Amount"].sum()
+        credit = df[df["Type"] == "Credit"]["Amount"].sum()
+        debit = df[df["Type"] == "Debit"]["Amount"].sum()
+
+        st.write("### 💰 Total:", total)
+        st.write("### 🟢 Credit:", credit)
+        st.write("### 🔴 Debit:", debit)
