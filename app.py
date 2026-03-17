@@ -3,48 +3,69 @@ import pdfplumber
 import pandas as pd
 import re
 import io
+import pytesseract
+from PIL import Image
+import difflib
+from openai import OpenAI
 
-st.title("🚀 Fintech Bank Statement Analyzer (AI Pro)")
+# 🔐 OpenAI setup
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-file = st.file_uploader("Upload Bank Statement PDF")
+st.set_page_config(layout="wide")
+
+st.title("🚀 Fintech AI Analyzer (FINAL PRO)")
+
+# 📂 Upload
+file = st.file_uploader("Upload Bank Statement (PDF/Image)")
+
+# 📄 Extract text
+def extract_text(file):
+    text_data = ""
+
+    if file.type == "application/pdf":
+        with pdfplumber.open(file) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    text_data += text + "\n"
+    else:
+        image = Image.open(file)
+        text_data = pytesseract.image_to_string(image)
+
+    return text_data
+
 
 if file:
-    lines = []
-
-    with pdfplumber.open(file) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text()
-            if text:
-                lines.extend(text.split("\n"))
+    full_text = extract_text(file)
+    lines = full_text.split("\n")
 
     transactions = []
 
-    for line in lines:
-        match = re.search(r"(\d{2}-\d{2}-\d{4})\s+(.*)\s+([\d,]+\.\d{2})", line)
+    for i, line in enumerate(lines):
+        match = re.search(r"(\d{2}-\d{2}-\d{4}).*?([\d,]+\.\d{2})", line)
 
         if match:
             date = match.group(1)
-            desc = match.group(2).strip()
-            amount = float(match.group(3).replace(",", ""))
+            amount = float(match.group(2).replace(",", ""))
 
-            # Credit / Debit
-            if amount > 5000:
-                txn_type = "Credit"
-            else:
-                txn_type = "Debit"
+            desc_parts = []
+            for j in range(max(0, i-2), min(len(lines), i+3)):
+                desc_parts.append(lines[j])
 
-            # Category
-            desc_lower = desc.lower()
+            desc = " ".join(desc_parts)
+            desc = re.sub(r"\s+", " ", desc)
 
-            if "upi" in desc_lower:
+            txn_type = "Credit" if amount > 5000 else "Debit"
+
+            d = desc.lower()
+
+            if "upi" in d:
                 category = "UPI"
-            elif "bank" in desc_lower:
+            elif "bank" in d:
                 category = "Bank Transfer"
-            elif "atm" in desc_lower:
+            elif "atm" in d:
                 category = "ATM"
-            elif "salary" in desc_lower:
-                category = "Salary"
-            elif "amazon" in desc_lower or "flipkart" in desc_lower:
+            elif "amazon" in d or "flipkart" in d:
                 category = "Shopping"
             else:
                 category = "Other"
@@ -53,67 +74,67 @@ if file:
 
     df = pd.DataFrame(transactions, columns=["Date", "Description", "Amount", "Type", "Category"])
 
-    st.write("### 📋 Full Data")
+    st.subheader("📊 Full Data")
     st.dataframe(df)
 
-    # Summary
-    if not df.empty:
-        total = df["Amount"].sum()
-        credit = df[df["Type"] == "Credit"]["Amount"].sum()
-        debit = df[df["Type"] == "Debit"]["Amount"].sum()
+    # 🔎 SMART SEARCH
+    st.subheader("🔎 Search by Name")
 
-        st.write("### 💰 Total:", total)
-        st.write("### 🟢 Credit:", credit)
-        st.write("### 🔴 Debit:", debit)
+    search = st.text_input("Enter Name")
 
-        st.write("### 📊 Category Chart")
-        st.bar_chart(df.groupby("Category")["Amount"].sum())
-
-    # 🔍 SMART SEARCH (FIXED)
-    st.write("## 🔎 Search / Filter by Name")
-    search = st.text_input("Enter Name (e.g. Vipin Kumar)")
+    filtered_df = pd.DataFrame()
 
     if search:
-        clean_search = search.lower().replace(" ", "")
+        results = []
 
-        filtered_df = df[
-            df["Description"].str.lower().str.replace(" ", "").str.contains(clean_search, na=False)
-        ]
+        for _, row in df.iterrows():
+            desc = row["Description"]
 
-        st.write(f"### 📌 Data for: {search}")
+            similarity = difflib.SequenceMatcher(None, search.lower(), desc.lower()).ratio()
+
+            if similarity > 0.4 or search.lower() in desc.lower():
+                results.append(row)
+
+        filtered_df = pd.DataFrame(results)
+
+        st.subheader(f"📌 Data for: {search}")
         st.dataframe(filtered_df)
 
-        if not filtered_df.empty:
-            total_filtered = filtered_df["Amount"].sum()
-            st.write("### 💰 Total for this:", total_filtered)
+    # 📥 DOWNLOAD FILTERED
+    if not filtered_df.empty:
+        csv = filtered_df.to_csv(index=False).encode("utf-8")
 
-            # 🤖 AI Insight
-            st.write("### 🤖 AI Insight")
+        st.download_button(
+            label="📥 Download Filtered Data",
+            data=csv,
+            file_name=f"{search}_data.csv",
+            mime="text/csv"
+        )
 
-            if total_filtered > 50000:
-                st.success("High transaction detected 🚀")
-            else:
-                st.info("Normal transaction activity")
+    # 🤖 GPT AI CHATBOT
+    st.subheader("🤖 Ask AI (GPT Powered)")
 
-            # 📥 ADVANCED EXCEL REPORT
-            output = io.BytesIO()
+    question = st.text_input("Ask anything about your data")
 
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name="All Data")
+    if question and not df.empty:
 
-                category_summary = df.groupby("Category")["Amount"].sum().reset_index()
-                category_summary.to_excel(writer, index=False, sheet_name="Category Summary")
+        data_text = df.to_string(index=False)
 
-                filtered_df.to_excel(writer, index=False, sheet_name="Filtered Data")
+        prompt = f"""
+You are a financial assistant.
 
-            excel_data = output.getvalue()
+Here is bank transaction data:
+{data_text}
 
-            st.download_button(
-                label="📥 Download Advanced Report",
-                data=excel_data,
-                file_name=f"{search}_report.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+User question:
+{question}
 
-        else:
-            st.warning("No data found ❌")
+Answer clearly and shortly.
+"""
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        st.write("🤖 AI:", response.choices[0].message.content)
