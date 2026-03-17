@@ -1,92 +1,72 @@
 import streamlit as st
 import pdfplumber
 import pandas as pd
+import re
 from openai import OpenAI
 import os
-import json
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-st.title("💰 AI Fintech Analyzer")
+st.title("💰 Smart Fintech Analyzer")
 
 uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
 search_name = st.text_input("Enter Name (optional)")
 
 if uploaded_file:
 
-    text = ""
+    data = []
 
     with pdfplumber.open(uploaded_file) as pdf:
         for page in pdf.pages:
-            t = page.extract_text()
-            if t:
-                text += t + "\n"
+            table = page.extract_table()
 
-    st.success("PDF Loaded")
+            if table:
+                for row in table:
+                    try:
+                        date = row[0]
+                        particulars = row[2]
+                        debit = row[3]
+                        credit = row[4]
 
-    # 🔥 STRONG PROMPT
-    response = client.responses.create(
-        model="gpt-4o-mini",
-        input=f"""
-You are expert in bank statements.
+                        if date and particulars:
 
-Extract ALL transactions STRICTLY.
+                            debit = float(debit) if debit else 0
+                            credit = float(credit) if credit else 0
 
-Understand table format.
+                            data.append({
+                                "Date": date,
+                                "Name": particulars,
+                                "Credit": credit,
+                                "Debit": debit
+                            })
 
-IMPORTANT RULES:
-- If amount is in debit column → debit
-- If amount is in credit column → credit
-- NEVER put both 0
-- NEVER miss credit
-- Identify correctly
+                    except:
+                        continue
 
-Return ONLY JSON:
+    df = pd.DataFrame(data)
 
-[
-  {{
-    "date": "DD-MM-YYYY",
-    "name": "clean name",
-    "credit": number,
-    "debit": number
-  }}
-]
+    # 🔥 AI for name cleaning only
+    def clean_name(name):
+        try:
+            response = client.responses.create(
+                model="gpt-4o-mini",
+                input=f"Extract only person or merchant name from: {name}"
+            )
+            return response.output_text.strip()
+        except:
+            return name
 
-TEXT:
-{text}
-"""
-    )
+    df["Name"] = df["Name"].apply(clean_name)
 
-    try:
-        output = response.output_text.strip()
+    if search_name:
+        df = df[df["Name"].str.contains(search_name, case=False, na=False)]
 
-        start = output.find("[")
-        end = output.rfind("]") + 1
-        clean_json = output[start:end]
+    st.dataframe(df)
 
-        data = json.loads(clean_json)
+    st.write("Total Credit:", df["Credit"].sum())
+    st.write("Total Debit:", df["Debit"].sum())
 
-        df = pd.DataFrame(data)
+    df.to_excel("output.xlsx", index=False)
 
-        df["credit"] = pd.to_numeric(df["credit"], errors="coerce").fillna(0)
-        df["debit"] = pd.to_numeric(df["debit"], errors="coerce").fillna(0)
-
-        # ❗ REMOVE WRONG ROWS
-        df = df[(df["credit"] != 0) | (df["debit"] != 0)]
-
-        if search_name:
-            df = df[df["name"].str.contains(search_name, case=False, na=False)]
-
-        st.dataframe(df)
-
-        st.write("Total Credit:", df["credit"].sum())
-        st.write("Total Debit:", df["debit"].sum())
-
-        df.to_excel("output.xlsx", index=False)
-
-        with open("output.xlsx", "rb") as f:
-            st.download_button("Download Excel", f, "transactions.xlsx")
-
-    except Exception as e:
-        st.error("Error")
-        st.text(str(e))
+    with open("output.xlsx", "rb") as f:
+        st.download_button("Download Excel", f, "transactions.xlsx")
