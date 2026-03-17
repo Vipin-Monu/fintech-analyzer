@@ -2,71 +2,85 @@ import streamlit as st
 import pdfplumber
 import pandas as pd
 import re
-from openai import OpenAI
-import os
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+st.title("⚡ Fintech Analyzer (Fast & Accurate)")
 
-st.title("💰 Smart Fintech Analyzer")
-
-uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
-search_name = st.text_input("Enter Name (optional)")
+uploaded_file = st.file_uploader("Upload Bank Statement PDF", type=["pdf"])
+search_name = st.text_input("Search Name (optional)")
 
 if uploaded_file:
 
     data = []
+    prev_balance = None
 
     with pdfplumber.open(uploaded_file) as pdf:
         for page in pdf.pages:
-            table = page.extract_table()
+            text = page.extract_text()
 
-            if table:
-                for row in table:
-                    try:
-                        date = row[0]
-                        particulars = row[2]
-                        debit = row[3]
-                        credit = row[4]
+            if not text:
+                continue
 
-                        if date and particulars:
+            lines = text.split("\n")
 
-                            debit = float(debit) if debit else 0
-                            credit = float(credit) if credit else 0
+            for line in lines:
+
+                # match date + numbers
+                if re.search(r"\d{2}-\d{2}-\d{4}", line):
+
+                    amounts = re.findall(r"\d+\.\d+", line)
+
+                    if len(amounts) >= 2:
+                        try:
+                            date = re.search(r"\d{2}-\d{2}-\d{4}", line).group()
+                            amount = float(amounts[-2])
+                            balance = float(amounts[-1])
+
+                            # clean name
+                            name = line
+                            name = re.sub(r"\d{2}-\d{2}-\d{4}", "", name)
+                            name = re.sub(r"\d+\.\d+", "", name)
+                            name = re.sub(r"UPI/.*?/", "", name)
+                            name = re.sub(r"/.*", "", name)
+                            name = name.strip()
+
+                            debit = 0
+                            credit = 0
+
+                            # 🔥 balance logic (core)
+                            if prev_balance is not None:
+                                if balance > prev_balance:
+                                    credit = amount
+                                else:
+                                    debit = amount
+
+                            prev_balance = balance
 
                             data.append({
                                 "Date": date,
-                                "Name": particulars,
+                                "Name": name,
                                 "Credit": credit,
                                 "Debit": debit
                             })
 
-                    except:
-                        continue
+                        except:
+                            continue
 
     df = pd.DataFrame(data)
 
-    # 🔥 AI for name cleaning only
-    def clean_name(name):
-        try:
-            response = client.responses.create(
-                model="gpt-4o-mini",
-                input=f"Extract only person or merchant name from: {name}"
-            )
-            return response.output_text.strip()
-        except:
-            return name
-
-    df["Name"] = df["Name"].apply(clean_name)
-
+    # search filter
     if search_name:
         df = df[df["Name"].str.contains(search_name, case=False, na=False)]
 
-    st.dataframe(df)
+    st.dataframe(df, use_container_width=True)
 
-    st.write("Total Credit:", df["Credit"].sum())
-    st.write("Total Debit:", df["Debit"].sum())
+    total_credit = df["Credit"].sum()
+    total_debit = df["Debit"].sum()
 
-    df.to_excel("output.xlsx", index=False)
+    st.success(f"Total Credit: {total_credit}")
+    st.error(f"Total Debit: {total_debit}")
 
-    with open("output.xlsx", "rb") as f:
-        st.download_button("Download Excel", f, "transactions.xlsx")
+    # download excel
+    df.to_excel("transactions.xlsx", index=False)
+
+    with open("transactions.xlsx", "rb") as f:
+        st.download_button("📥 Download Excel", f, "transactions.xlsx")
