@@ -9,34 +9,32 @@ file = st.file_uploader("Upload Bank Statement PDF")
 
 if file:
 
-    lines = []
+    transactions = []
 
     with pdfplumber.open(file) as pdf:
-
         for page in pdf.pages:
-
             text = page.extract_text()
 
             if text:
-                lines.extend(text.split("\n"))
+                lines = text.split("\n")
 
-    data = []
+                for line in lines:
 
-    for line in lines:
+                    match = re.search(
+                        r'(\d{2}[-/]\d{2}[-/]\d{4})\s+(.*?)\s+([\d,]+\.\d{2})',
+                        line
+                    )
 
-        amounts = re.findall(r"\d[\d,]*\.\d{2}", line)
+                    if match:
+                        date = match.group(1)
+                        desc = match.group(2)
+                        amount = float(match.group(3).replace(",", ""))
 
-        if len(amounts) >= 2:
+                        transactions.append([date, desc, amount])
 
-            data.append({
-                "transaction": line,
-                "amount": float(amounts[-2].replace(",",""))
-            })
-
-    df = pd.DataFrame(data)
+    df = pd.DataFrame(transactions, columns=["Date", "Description", "Amount"])
 
     st.dataframe(df)
 
     if not df.empty:
-
-        st.write("Total:", df["amount"].sum())
+        st.write("### Total Amount:", df["Amount"].sum())
