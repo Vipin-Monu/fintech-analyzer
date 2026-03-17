@@ -4,12 +4,9 @@ import pdfplumber
 import re
 from io import BytesIO
 
-st.title("💰 Fintech Analyzer")
+st.title("💰 Fintech Analyzer (Accurate Version)")
 
-uploaded_file = st.file_uploader("Upload Bank Statement (PDF)", type=["pdf"])
-
-def clean_text(text):
-    return text.lower().replace(" ", "").strip()
+uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
 
 if uploaded_file:
     text = ""
@@ -22,59 +19,59 @@ if uploaded_file:
     data = []
 
     for line in lines:
-        match = re.search(r"(\d{2}-\d{2}-\d{4}).*(\d+\.\d{2})", line)
+
+        # Proper pattern: Date + Debit + Credit
+        match = re.search(
+            r"(\d{2}-\d{2}-\d{4}).*?(\d+\.\d{2})?\s*(\d+\.\d{2})?\s*(\d+\.\d{2})",
+            line
+        )
 
         if match:
             date = match.group(1)
-            amount = float(match.group(2))
 
-            name = " ".join(re.findall(r"[A-Za-z]+", line))
+            debit = match.group(2)
+            credit = match.group(3)
+            balance = match.group(4)
 
-            if "sent" in line.lower() or "paid" in line.lower():
-                txn_type = "Debit"
-            else:
-                txn_type = "Credit"
+            # Extract clean name
+            name = re.findall(r"/([A-Za-z ]+)", line)
+            name = name[0] if name else "Unknown"
 
-            data.append([date, name, amount, txn_type])
+            if debit:
+                data.append([date, name.strip(), float(debit), "Debit"])
+
+            if credit:
+                data.append([date, name.strip(), float(credit), "Credit"])
 
     df = pd.DataFrame(data, columns=["Date", "Name", "Amount", "Type"])
 
     search_name = st.text_input("🔍 Enter Name")
 
     if search_name:
-        search_clean = clean_text(search_name)
-        df["clean_name"] = df["Name"].apply(clean_text)
+        filtered_df = df[df["Name"].str.contains(search_name, case=False)]
 
-        filtered_df = df[df["clean_name"].str.contains(search_clean)]
-
-        # 🔴 Debit
         debit_df = filtered_df[filtered_df["Type"] == "Debit"]
-
-        # 🟢 Credit
         credit_df = filtered_df[filtered_df["Type"] == "Credit"]
 
-        # Show separately
-        st.subheader("🔴 Debit Transactions")
+        st.subheader("🔴 Debit")
         st.dataframe(debit_df)
 
-        st.subheader("🟢 Credit Transactions")
+        st.subheader("🟢 Credit")
         st.dataframe(credit_df)
 
-        # Summary
         st.write("### 💰 Summary")
         st.write("Total Debit:", debit_df["Amount"].sum())
         st.write("Total Credit:", credit_df["Amount"].sum())
+        st.write("Net:", credit_df["Amount"].sum() - debit_df["Amount"].sum())
 
-        # Excel download
+        # Excel
         output = BytesIO()
-
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             debit_df.to_excel(writer, sheet_name='Debit', index=False)
             credit_df.to_excel(writer, sheet_name='Credit', index=False)
 
         st.download_button(
-            label="📥 Download Excel",
-            data=output.getvalue(),
-            file_name="transactions.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            "📥 Download Excel",
+            output.getvalue(),
+            "transactions.xlsx"
         )
