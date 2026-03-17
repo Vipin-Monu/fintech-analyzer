@@ -77,7 +77,7 @@ if file:
     st.subheader("📊 Full Data")
     st.dataframe(df)
 
-    # 🔎 SMART SEARCH
+    # 🔎 SEARCH BY NAME
     st.subheader("🔎 Search by Name")
 
     search = st.text_input("Enter Name")
@@ -100,7 +100,7 @@ if file:
         st.subheader(f"📌 Data for: {search}")
         st.dataframe(filtered_df)
 
-    # 📥 DOWNLOAD FILTERED
+    # 📥 DOWNLOAD FILTERED DATA
     if not filtered_df.empty:
         csv = filtered_df.to_csv(index=False).encode("utf-8")
 
@@ -111,7 +111,7 @@ if file:
             mime="text/csv"
         )
 
-    # 🤖 GPT AI CHATBOT (UPDATED)
+    # 🤖 GPT AI CHATBOT (FINAL FIXED)
     st.subheader("🤖 Ask AI (GPT Powered)")
 
     question = st.text_input("Ask anything about your data")
@@ -137,4 +137,10 @@ Answer clearly and shortly.
             input=prompt
         )
 
-        st.write("🤖 AI:", response.output_text)
+        # ✅ SAFE OUTPUT
+        try:
+            answer = response.output[0].content[0].text
+        except:
+            answer = "AI response error"
+
+        st.write("🤖 AI:", answer)
