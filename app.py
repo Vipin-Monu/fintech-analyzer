@@ -4,72 +4,119 @@ import pdfplumber
 import re
 from io import BytesIO
 
-st.title("💰 Fintech Analyzer (Final Working)")
+st.title("💰 Universal Fintech Analyzer")
 
-uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
+uploaded_file = st.file_uploader("Upload Bank Statement PDF", type=["pdf"])
+
+
+# 🔹 Extract name from line
+def extract_name(text):
+    # try common patterns
+    match = re.search(r"/([A-Za-z ]{3,})", text)
+    if match:
+        return match.group(1).strip()
+
+    words = re.findall(r"[A-Za-z]+", text)
+    return " ".join(words[:3]) if words else "Unknown"
+
 
 if uploaded_file:
-    text = ""
+    all_rows = []
 
     with pdfplumber.open(uploaded_file) as pdf:
         for page in pdf.pages:
-            text += page.extract_text() + "\n"
 
-    lines = text.split("\n")
-    data = []
+            # -----------------------
+            # 🔹 METHOD 1: TABLE
+            # -----------------------
+            tables = page.extract_tables()
 
-    for line in lines:
+            if tables:
+                for table in tables:
+                    df = pd.DataFrame(table)
 
-        # check valid transaction line
-        if re.search(r"\d{2}-\d{2}-\d{4}", line):
+                    if len(df.columns) >= 5:
+                        for row in df.values:
+                            try:
+                                date = str(row[0])
 
-            parts = line.split()
+                                if re.search(r"\d{2}-\d{2}-\d{4}", date):
 
-            # find all numbers
-            numbers = re.findall(r"\d+\.\d{2}", line)
+                                    particulars = str(row[2])
 
-            if len(numbers) >= 2:
-                amount = float(numbers[-2])   # debit or credit
-                balance = float(numbers[-1])  # last is always balance
+                                    debit = pd.to_numeric(row[3], errors="coerce")
+                                    credit = pd.to_numeric(row[4], errors="coerce")
 
-                date = parts[0]
+                                    name = extract_name(particulars)
 
-                # detect type
-                if "sent" in line.lower() or "paid" in line.lower() or "upi" in line.lower():
-                    txn_type = "Debit"
-                else:
-                    txn_type = "Credit"
+                                    all_rows.append([
+                                        date,
+                                        name,
+                                        credit if pd.notna(credit) else 0,
+                                        debit if pd.notna(debit) else 0
+                                    ])
+                            except:
+                                pass
 
-                # extract name better
-                name_match = re.search(r"/([A-Za-z ]+)", line)
-                name = name_match.group(1).strip() if name_match else "Unknown"
+            # -----------------------
+            # 🔹 METHOD 2: TEXT (fallback)
+            # -----------------------
+            else:
+                text = page.extract_text()
+                if text:
+                    lines = text.split("\n")
 
-                data.append([date, name, amount, txn_type])
+                    for line in lines:
+                        if re.search(r"\d{2}-\d{2}-\d{4}", line):
 
-    df = pd.DataFrame(data, columns=["Date", "Name", "Amount", "Type"])
+                            nums = re.findall(r"\d+\.\d{2}", line)
 
-    search_name = st.text_input("🔍 Enter Name")
+                            if len(nums) >= 2:
+                                amount = float(nums[-2])  # ignore balance
 
-    if search_name:
-        filtered_df = df[df["Name"].str.contains(search_name, case=False)]
+                                name = extract_name(line)
+                                date = re.search(r"\d{2}-\d{2}-\d{4}", line).group()
 
-        debit_df = filtered_df[filtered_df["Type"] == "Debit"]
-        credit_df = filtered_df[filtered_df["Type"] == "Credit"]
+                                # detect type
+                                if "cr" in line.lower() or "deposit" in line.lower() or "imps" in line.lower():
+                                    credit = amount
+                                    debit = 0
+                                else:
+                                    debit = amount
+                                    credit = 0
 
-        st.subheader("🔴 Debit")
-        st.dataframe(debit_df)
+                                all_rows.append([date, name, credit, debit])
 
-        st.subheader("🟢 Credit")
-        st.dataframe(credit_df)
+    if all_rows:
+        df = pd.DataFrame(all_rows, columns=["Date", "Name", "Credit", "Debit"])
+
+        # 🔍 Name filter
+        search = st.text_input("🔍 Search Name")
+
+        if search:
+            df = df[df["Name"].str.contains(search, case=False, na=False)]
+
+        st.subheader("📊 Transactions")
+        st.dataframe(df)
+
+        # 💰 Summary
+        total_credit = df["Credit"].sum()
+        total_debit = df["Debit"].sum()
 
         st.write("### 💰 Summary")
-        st.write("Total Debit:", debit_df["Amount"].sum())
-        st.write("Total Credit:", credit_df["Amount"].sum())
+        st.write("🟢 Total Credit:", total_credit)
+        st.write("🔴 Total Debit:", total_debit)
+        st.write("📈 Net:", total_credit - total_debit)
 
-        # Excel
+        # 📥 Excel
         output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            debit_df.to_excel(writer, sheet_name='Debit', index=False)
-            credit_df.to_excel(writer, sheet_name='Credit', index=False)
+        df.to_excel(output, index=False)
 
-        st.download_button("📥 Download Excel", output.getvalue(), "transactions.xlsx")
+        st.download_button(
+            "📥 Download Excel",
+            output.getvalue(),
+            "transactions.xlsx"
+        )
+
+    else:
+        st.error("❌ No data detected")
