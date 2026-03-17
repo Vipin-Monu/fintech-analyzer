@@ -2,121 +2,117 @@ import streamlit as st
 import pandas as pd
 import pdfplumber
 import re
-from io import BytesIO
+
+st.set_page_config(page_title="Fintech Analyzer", layout="wide")
 
 st.title("💰 Universal Fintech Analyzer")
 
+# Upload PDF
 uploaded_file = st.file_uploader("Upload Bank Statement PDF", type=["pdf"])
 
+# Name search
+search_name = st.text_input("🔍 Enter Name")
 
-# 🔹 Extract name from line
-def extract_name(text):
-    # try common patterns
-    match = re.search(r"/([A-Za-z ]{3,})", text)
-    if match:
-        return match.group(1).strip()
+# Name matching function (STRONG)
+def match_name(line, search_name):
+    line = line.lower()
+    search_name = search_name.lower()
 
-    words = re.findall(r"[A-Za-z]+", text)
-    return " ".join(words[:3]) if words else "Unknown"
+    parts = search_name.split()
+
+    for part in parts:
+        if part in line:
+            return True
+
+    return False
 
 
 if uploaded_file:
-    all_rows = []
 
+    # Extract text from PDF
+    all_text = ""
     with pdfplumber.open(uploaded_file) as pdf:
         for page in pdf.pages:
+            text = page.extract_text()
+            if text:
+                all_text += text + "\n"
 
-            # -----------------------
-            # 🔹 METHOD 1: TABLE
-            # -----------------------
-            tables = page.extract_tables()
+    # Split lines
+    lines = all_text.split("\n")
 
-            if tables:
-                for table in tables:
-                    df = pd.DataFrame(table)
+    # Merge broken lines (IMPORTANT FIX)
+    cleaned_lines = []
+    temp = ""
 
-                    if len(df.columns) >= 5:
-                        for row in df.values:
-                            try:
-                                date = str(row[0])
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
 
-                                if re.search(r"\d{2}-\d{2}-\d{4}", date):
+        if re.match(r"\d{2}-\d{2}-\d{4}", line):
+            if temp:
+                cleaned_lines.append(temp)
+            temp = line
+        else:
+            temp += " " + line
 
-                                    particulars = str(row[2])
+    if temp:
+        cleaned_lines.append(temp)
 
-                                    debit = pd.to_numeric(row[3], errors="coerce")
-                                    credit = pd.to_numeric(row[4], errors="coerce")
+    data = []
 
-                                    name = extract_name(particulars)
+    for line in cleaned_lines:
 
-                                    all_rows.append([
-                                        date,
-                                        name,
-                                        credit if pd.notna(credit) else 0,
-                                        debit if pd.notna(debit) else 0
-                                    ])
-                            except:
-                                pass
+        if search_name and match_name(line, search_name):
 
-            # -----------------------
-            # 🔹 METHOD 2: TEXT (fallback)
-            # -----------------------
-            else:
-                text = page.extract_text()
-                if text:
-                    lines = text.split("\n")
+            # Extract date
+            date_match = re.search(r"\d{2}-\d{2}-\d{4}", line)
+            date = date_match.group() if date_match else ""
 
-                    for line in lines:
-                        if re.search(r"\d{2}-\d{2}-\d{4}", line):
+            # Extract amounts
+            amounts = re.findall(r"\d+\.\d{2}", line)
 
-                            nums = re.findall(r"\d+\.\d{2}", line)
+            debit = 0
+            credit = 0
 
-                            if len(nums) >= 2:
-                                amount = float(nums[-2])  # ignore balance
+            if len(amounts) >= 2:
+                debit = float(amounts[0])
+                credit = float(amounts[1])
+            elif len(amounts) == 1:
+                debit = float(amounts[0])
 
-                                name = extract_name(line)
-                                date = re.search(r"\d{2}-\d{2}-\d{4}", line).group()
+            data.append({
+                "Date": date,
+                "Name": search_name,
+                "Credit": credit,
+                "Debit": debit
+            })
 
-                                # detect type
-                                if "cr" in line.lower() or "deposit" in line.lower() or "imps" in line.lower():
-                                    credit = amount
-                                    debit = 0
-                                else:
-                                    debit = amount
-                                    credit = 0
-
-                                all_rows.append([date, name, credit, debit])
-
-    if all_rows:
-        df = pd.DataFrame(all_rows, columns=["Date", "Name", "Credit", "Debit"])
-
-        # 🔍 Name filter
-        search = st.text_input("🔍 Search Name")
-
-        if search:
-            df = df[df["Name"].str.contains(search, case=False, na=False)]
+    if data:
+        df = pd.DataFrame(data)
 
         st.subheader("📊 Transactions")
-        st.dataframe(df)
+        st.dataframe(df, use_container_width=True)
 
-        # 💰 Summary
+        # Summary
         total_credit = df["Credit"].sum()
         total_debit = df["Debit"].sum()
 
-        st.write("### 💰 Summary")
-        st.write("🟢 Total Credit:", total_credit)
-        st.write("🔴 Total Debit:", total_debit)
-        st.write("📈 Net:", total_credit - total_debit)
+        st.subheader("💰 Summary")
+        st.write(f"🟢 Total Credit: {total_credit}")
+        st.write(f"🔴 Total Debit: {total_debit}")
+        st.write(f"📊 Net: {total_credit - total_debit}")
 
-        # 📥 Excel
-        output = BytesIO()
-        df.to_excel(output, index=False)
+        # Excel download
+        excel_file = "filtered_transactions.xlsx"
+        df.to_excel(excel_file, index=False)
 
-        st.download_button(
-            "📥 Download Excel",
-            output.getvalue(),
-            "transactions.xlsx"
-        )
+        with open(excel_file, "rb") as f:
+            st.download_button(
+                "⬇️ Download Excel",
+                f,
+                file_name=excel_file
+            )
 
     else:
-        st.error("❌ No data detected")
+        st.warning("⚠️ No data found for this name")
