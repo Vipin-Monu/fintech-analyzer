@@ -111,7 +111,7 @@ if file:
             mime="text/csv"
         )
 
-    # 🤖 GPT AI CHATBOT
+    # 🤖 GPT AI CHATBOT (UPDATED)
     st.subheader("🤖 Ask AI (GPT Powered)")
 
     question = st.text_input("Ask anything about your data")
@@ -132,9 +132,9 @@ User question:
 Answer clearly and shortly.
 """
 
-        response = client.chat.completions.create(
+        response = client.responses.create(
             model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
+            input=prompt
         )
 
-        st.write("🤖 AI:", response.choices[0].message.content)
+        st.write("🤖 AI:", response.output_text)
