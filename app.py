@@ -3,70 +3,70 @@ import pdfplumber
 import pandas as pd
 import re
 
-# 🔥 BANK DETECTION
-def detect_bank(text):
-    text = text.lower()
+st.title("🔥 Fintech Analyzer")
 
-    if "axis bank" in text:
-        return "AXIS"
-    elif "state bank of india" in text:
-        return "SBI"
-    elif "hdfc bank" in text:
-        return "HDFC"
-    else:
-        return "UNKNOWN"
+uploaded_file = st.file_uploader("Upload Bank Statement PDF")
 
-
-# 🔥 AXIS PARSER (FINAL STABLE)
 def parse_axis(text):
-
     lines = text.split("\n")
     data = []
 
-    prev_balance = None
-
     for line in lines:
-
         date_match = re.search(r"\d{2}-\d{2}-\d{4}", line)
+
         if not date_match:
             continue
 
         date = date_match.group()
 
-        amounts = re.findall(r"\d+\.\d+", line)
+        amounts = re.findall(r"\d+\.?\d*", line)
 
         if len(amounts) < 2:
             continue
 
-        amount = float(amounts[-2])
-        balance = float(amounts[-1])
+        debit = float(amounts[-2])
+        credit = float(amounts[-1])
 
-        credit = 0
-        debit = 0
-
-        if prev_balance is not None:
-            if balance > prev_balance:
-                credit = amount
-            else:
-                debit = amount
-
-        prev_balance = balance
-
-        name = line
-        name = re.sub(r"\d{2}-\d{2}-\d{4}", "", name)
-        name = re.sub(r"\d+\.\d+", "", name)
-        name = re.sub(r"UPI/.*?/", "", name)
-        name = re.sub(r"/.*", "", name)
-        name = name.strip()
-
-        if len(name) < 3:
-            continue
+        # name निकालने की कोशिश
+        name = line.replace(date, "").strip()
 
         data.append({
             "Date": date,
-            "Name": name,
+            "Name": name[:30],
             "Credit": credit,
             "Debit": debit
         })
 
     return data
+
+
+if uploaded_file:
+    try:
+        with pdfplumber.open(uploaded_file) as pdf:
+            full_text = ""
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    full_text += text + "\n"
+
+        st.success("PDF Loaded ✅")
+
+        data = parse_axis(full_text)
+
+        if len(data) == 0:
+            st.warning("No transactions found ⚠️")
+        else:
+            df = pd.DataFrame(data)
+
+            st.dataframe(df)
+
+            st.success(f"Total Credit: {df['Credit'].sum()}")
+            st.error(f"Total Debit: {df['Debit'].sum()}")
+
+            df.to_excel("transactions.xlsx", index=False)
+
+            with open("transactions.xlsx", "rb") as f:
+                st.download_button("Download Excel", f, "transactions.xlsx")
+
+    except Exception as e:
+        st.error(f"ERROR: {e}")
